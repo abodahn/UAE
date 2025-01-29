@@ -1,142 +1,100 @@
-from flask import Flask, request, redirect, session, render_template_string, send_file
+import streamlit as st
 import pandas as pd
-from io import BytesIO
 
-app = Flask(__name__)
-app.secret_key = 'secret123'
-
+# Dummy user database
 USERS = {
     "admin": {"password": "123", "role": "admin"},
     "murhaf": {"password": "123", "role": "user"},
     "khuram": {"password": "123", "role": "user"}
 }
 
-TASKS = []
+# In-memory task storage
+if "tasks" not in st.session_state:
+    st.session_state.tasks = []
 
-LOGIN_PAGE = '''
-<div style="display: flex; justify-content: center; align-items: center; height: 100vh; flex-direction: column; text-align: center; background-color: #f0f0f0;">
-    <h2 style="font-size: 24px;">Field Support Tracker</h2>
-    <form method="post" style="width: 300px;">
-        <input type="text" name="username" placeholder="Username" required style="width: 100%; margin: 5px; padding: 10px; font-size: 18px;">
-        <input type="password" name="password" placeholder="Password" required style="width: 100%; margin: 5px; padding: 10px; font-size: 18px;">
-        <button type="submit" style="width: 100%; margin: 5px; padding: 10px; font-size: 18px; background-color: #4CAF50; color: white;">Login</button>
-    </form>
-</div>
-'''
+# Authentication logic
+def authenticate(username, password):
+    if username in USERS and USERS[username]['password'] == password:
+        st.session_state.user = username
+        st.session_state.role = USERS[username]['role']
+        st.session_state.authenticated = True
+        return True
+    return False
 
-
-@app.route('/', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-
-        if username in USERS and USERS[username]['password'] == password:
-            session['user'] = username
-            session['role'] = USERS[username]['role']
-            return redirect('/dashboard')
-        else:
-            return "Invalid credentials. Try again."
-    return render_template_string(LOGIN_PAGE)
-
-
-DASHBOARD_PAGE = '''
-<div style="text-align: center; background-color: #f0f8ff; padding: 20px;">
-    <h2 style="font-size: 28px;">Welcome, {{ session['user'] }}</h2>
-
-    {% if session['role'] == 'admin' %}
-    <form method="get" action="/dashboard" style="margin-bottom: 20px;">
-        <label style="font-size: 20px;">Select User:</label>
-        <select name="user_filter" onchange="this.form.submit()" style="font-size: 18px;">
-            <option value="">All Users</option>
-            {% for user in USERS.keys() %}
-                <option value="{{ user }}" {% if request.args.get('user_filter') == user %}selected{% endif %}>{{ user }}</option>
-            {% endfor %}
-        </select>
-    </form>
-    {% endif %}
-
-    <form method="post" style="display:inline-block; text-align: left; width: 400px; background-color: #ffffff; padding: 20px; border-radius: 10px;">
-        <h3 style="font-size: 22px;">Add Task</h3>
-        <input type="text" name="location" placeholder="Location" required style="width: 100%; margin:5px; padding:10px; font-size: 18px;">
-        <input type="text" name="start_time" placeholder="Start Time" required style="width: 100%; margin:5px; padding:10px; font-size: 18px;">
-        <input type="text" name="end_time" placeholder="End Time" required style="width: 100%; margin:5px; padding:10px; font-size: 18px;">
-        <input type="text" name="description" placeholder="Description" required style="width: 100%; margin:5px; padding:10px; font-size: 18px;">
-        <input type="text" name="status" placeholder="Status" required style="width: 100%; margin:5px; padding:10px; font-size: 18px;">
-        <input type="text" name="comments" placeholder="Comments" style="width: 100%; margin:5px; padding:10px; font-size: 18px;">
-        <button type="submit" style="width: 100%; margin:5px; padding:10px; font-size: 18px; background-color: #2196F3; color: white;">Add Task</button>
-    </form>
-
-    <h3 style="font-size: 24px;">Task List</h3>
-    <table border="1" style="margin: auto; width: 80%; text-align: left; font-size: 18px; background-color: #ffffff; border-radius: 10px;">
-        <tr style="background-color: #d3d3d3;">
-            <th>User</th>
-            <th>Location</th>
-            <th>Start Time</th>
-            <th>End Time</th>
-            <th>Description</th>
-            <th>Status</th>
-            <th>Comments</th>
-            <th>Action</th>
-        </tr>
-        {% for task in tasks %}
-            {% if session['role'] == 'admin' and (not request.args.get('user_filter') or task['user'] == request.args.get('user_filter')) %}
-                <tr>
-                    <td>{{ task['user'] }}</td>
-                    <td>{{ task['location'] }}</td>
-                    <td>{{ task['start_time'] }}</td>
-                    <td>{{ task['end_time'] }}</td>
-                    <td>{{ task['description'] }}</td>
-                    <td>{{ task['status'] }}</td>
-                    <td>{{ task['comments'] }}</td>
-                    <td><a href="/delete/{{ task['id'] }}">Delete</a></td>
-                </tr>
-            {% elif session['role'] == 'user' and task['user'] == session['user'] %}
-                <tr>
-                    <td>{{ task['user'] }}</td>
-                    <td>{{ task['location'] }}</td>
-                    <td>{{ task['start_time'] }}</td>
-                    <td>{{ task['end_time'] }}</td>
-                    <td>{{ task['description'] }}</td>
-                    <td>{{ task['status'] }}</td>
-                    <td>{{ task['comments'] }}</td>
-                    <td><a href="/delete/{{ task['id'] }}">Delete</a></td>
-                </tr>
-            {% endif %}
-        {% endfor %}
-    </table>
-
-    <br>
-    <a href="/logout" style="font-size: 20px;">Logout</a>
-</div>
-'''
-
-
-@app.route('/dashboard', methods=['GET', 'POST'])
-def dashboard():
-    if 'user' not in session:
-        return redirect('/')
-
-    if request.method == 'POST':
-        TASKS.append({
-            'id': len(TASKS) + 1,
-            'user': session['user'],
-            'location': request.form['location'],
-            'start_time': request.form['start_time'],
-            'end_time': request.form['end_time'],
-            'description': request.form['description'],
-            'status': request.form['status'],
-            'comments': request.form['comments']
-        })
-
-    return render_template_string(DASHBOARD_PAGE, tasks=TASKS, USERS=USERS)
-
-
-@app.route('/logout')
+# Logout function
 def logout():
-    session.clear()
-    return redirect('/')
+    st.session_state.authenticated = False
+    st.session_state.user = None
+    st.session_state.role = None
+    st.rerun()
 
+# Login Page
+def login_page():
+    st.title("Field Support Tracker")
+    
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+    
+    if st.button("Login"):
+        if authenticate(username, password):
+            st.success(f"Welcome, {username}!")
+            st.rerun()  # ✅ Fixed the issue by using st.rerun()
+        else:
+            st.error("Invalid credentials. Try again.")
 
-if __name__ == '__main__':
-    app.run(debug=True)
+# Dashboard Page
+def dashboard_page():
+    st.title(f"Dashboard - Welcome {st.session_state.user}")
+
+    if st.session_state.role == "admin":
+        selected_user = st.selectbox("Filter by User", ["All Users"] + list(USERS.keys()))
+    else:
+        selected_user = st.session_state.user
+
+    st.subheader("Add Task")
+    with st.form("task_form"):
+        location = st.text_input("Location")
+        start_time = st.text_input("Start Time")
+        end_time = st.text_input("End Time")
+        description = st.text_input("Description")
+        status = st.text_input("Status")
+        comments = st.text_input("Comments")
+        
+        submit_button = st.form_submit_button("Add Task")
+
+        if submit_button:
+            new_task = {
+                "User": st.session_state.user,
+                "Location": location,
+                "Start Time": start_time,
+                "End Time": end_time,
+                "Description": description,
+                "Status": status,
+                "Comments": comments
+            }
+            st.session_state.tasks.append(new_task)
+            st.success("Task added successfully!")
+            st.rerun()
+
+    # Filter and display tasks
+    st.subheader("Task List")
+    
+    df_tasks = pd.DataFrame(st.session_state.tasks)
+
+    if selected_user != "All Users":
+        df_tasks = df_tasks[df_tasks["User"] == selected_user]
+
+    st.dataframe(df_tasks)
+
+    # Logout button
+    if st.button("Logout"):
+        logout()
+
+# App Execution
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    login_page()
+else:
+    dashboard_page()
